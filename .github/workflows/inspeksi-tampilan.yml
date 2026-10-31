@@ -1,0 +1,37 @@
+name: Inspeksi tampilan dan performa
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspeksi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cari pengaturan layar penuh, skala, dan frame rate
+        run: |
+          {
+            echo "## Inspeksi tampilan dan performa"
+            echo
+            echo "### 1. File yang mengatur skala dan aspek"
+            echo '```'
+            grep -rIlE "IntegerScal|FitAspect|PresentNearest|letterbox|Letterbox|AspectMode|StretchToFill|ScaleMode" --include=*.cs . | head -30
+            echo '```'
+            echo
+            echo "### 2. Baris terkait di kode"
+            echo '```'
+            grep -rInE "IntegerScal|FitAspect|PresentNearest|AspectMode|StretchToFill|ScaleMode" --include=*.cs . | cut -c1-190 | head -70
+            echo '```'
+            echo
+            echo "### 3. Pengaturan frame rate dan delta time"
+            echo '```'
+            grep -rInE "FrameRate|TargetFps|FpsCap|DeltaTime|DtMode|Unlocked" --include=*.cs AndroidRuntimeHost RecompOne.Runtime/Host 2>/dev/null | cut -c1-190 | head -50
+            echo '```'
+            echo
+            echo "### 4. Default pengaturan"
+            echo '```'
+            grep -rInE "public (int|bool|string|float|double) [A-Z][A-Za-z]*(Resolution|Scale|Aspect|Fps|Frame|Vsync|VSync|Dither|Filter)" --include=*.cs . | cut -c1-190 | head -60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
