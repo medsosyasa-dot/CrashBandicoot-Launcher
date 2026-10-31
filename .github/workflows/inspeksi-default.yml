@@ -1,0 +1,33 @@
+name: Inspeksi default pengaturan
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspeksi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cetak potongan kode (dibungkus supaya muat di layar HP)
+        run: |
+          show() {
+            echo
+            echo "### $1 (baris $2-$3)"
+            echo '```'
+            sed -n "$2,$3p" "$1" | sed 's/^[ \t]*//' | fold -s -w 52
+            echo '```'
+          }
+          {
+            echo "## Potongan kode"
+            show RecompOne.Runtime/Config/ViewConfig.cs 190 215
+            show RecompOne.Runtime/Config/ViewConfig.cs 55 90
+            show RecompOne.Runtime/Host/Window/GraphicsPresets.cs 15 70
+            show AndroidRuntimeHost/AndroidGraphics.cs 20 110
+            echo
+            echo "### Semua baris FrameRate di ViewConfig"
+            echo '```'
+            grep -n "FrameRate" RecompOne.Runtime/Config/ViewConfig.cs | sed 's/^\([0-9]*\):[ \t]*/\1: /' | fold -s -w 52 | head -60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
