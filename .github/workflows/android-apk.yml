@@ -1,0 +1,66 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Pasang workload Android
+        run: dotnet workload install android
+
+      - name: Pulihkan keystore (supaya tanda tangan APK tetap sama)
+        uses: actions/cache@v4
+        with:
+          path: signing
+          key: android-keystore-v1
+
+      - name: Periksa folder signing
+        run: |
+          mkdir -p logs signing
+          ls -la signing | tee logs/signing.txt
+          if [ -f signing/android-release.keystore ] && [ ! -f signing/keystore.properties ]; then
+            echo "keystore ada tanpa properties; dihapus supaya dibuat ulang" | tee -a logs/signing.txt
+            rm -f signing/android-release.keystore
+          fi
+
+      - name: Pasang komponen Android SDK yang dibutuhkan
+        continue-on-error: true
+        run: |
+          dotnet build AndroidRuntimeHost/AndroidRuntimeHost.csproj -t:InstallAndroidDependencies -f net10.0-android -p:AndroidSdkDirectory="$ANDROID_HOME" -p:JavaSdkDirectory="$JAVA_HOME" -p:AcceptAndroidSDKLicenses=True 2>&1 | tail -40
+
+      - name: Build APK
+        run: |
+          python3 publish_release.py --platform android 2>&1 | tee logs/build.log
+
+      - name: Ringkasan
+        if: always()
+        run: |
+          {
+            echo "## Build Android APK"
+            echo '```'
+            grep -E "\[publish\]|error|Error|FAILED" logs/build.log 2>/dev/null | cut -c1-200 | tail -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: CrashBandicoot-android
+          path: |
+            publish-android/*.apk
+            logs/
+          if-no-files-found: ignore
