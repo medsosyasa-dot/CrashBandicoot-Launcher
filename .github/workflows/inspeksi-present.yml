@@ -1,0 +1,31 @@
+name: Inspeksi area gambar
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspeksi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cetak potongan kode (dibungkus supaya muat di layar HP)
+        run: |
+          show() {
+            echo
+            echo "### $1 (baris $2-$3)"
+            echo '```'
+            sed -n "$2,$3p" "$1" | sed 's/^[ \t]*//' | fold -s -w 52
+            echo '```'
+          }
+          {
+            echo "## Area gambar"
+            show RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs 1185 1260
+            show RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs 1370 1415
+            echo
+            echo "### Definisi FitAspect"
+            echo '```'
+            grep -rn "FitAspect" --include=*.cs . | sed 's/^\.\///' | fold -s -w 52 | head -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
