@@ -1,0 +1,141 @@
+name: Build Android APK (dengan tambalan)
+
+on:
+  workflow_dispatch:
+    inputs:
+      fill_screen:
+        description: "Isi layar penuh (selisih rasio kecil diregangkan)"
+        type: boolean
+        default: true
+      default_resolution:
+        description: "Resolusi internal bawaan di Android (hanya pengaturan baru)"
+        type: choice
+        options:
+          - "tidak diubah"
+          - "1"
+          - "2"
+        default: "2"
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tambal kode (layar penuh dan resolusi bawaan)
+        env:
+          FILL_SCREEN: ${{ inputs.fill_screen }}
+          DEF_RES: ${{ inputs.default_resolution }}
+        run: |
+          set -eo pipefail
+          mkdir -p logs
+          python3 - <<'PY' 2>&1 | tee logs/patch.log
+          import os, re, sys
+
+          done = []
+
+          if os.environ.get("FILL_SCREEN", "true") == "true":
+              p = "RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs"
+              s = open(p, encoding="utf-8").read()
+              pat = re.compile(r"^([ \t]*)int targetX = \(surfaceWidth - targetWidth\) / 2;", re.M)
+              n = len(pat.findall(s))
+              if n != 1:
+                  sys.exit("GAGAL: jangkar 'int targetX' ditemukan %d kali (harus 1) di %s" % (n, p))
+              block = (
+                  "@@// CrashPort: isi layar penuh bila selisih rasio kecil (<= 8%) dan integer scaling mati.\n"
+                  "@@if (System.OperatingSystem.IsAndroid() && !GpuHle.IntegerScale && aspect > 0f)\n"
+                  "@@{\n"
+                  "@@    float crashportRatio = ((float)surfaceWidth / (float)surfaceHeight) / aspect;\n"
+                  "@@    if (crashportRatio >= 0.92f && crashportRatio <= 1.08f)\n"
+                  "@@    {\n"
+                  "@@        targetWidth = surfaceWidth;\n"
+                  "@@        targetHeight = surfaceHeight;\n"
+                  "@@    }\n"
+                  "@@}\n"
+              )
+              s = pat.sub(lambda m: block.replace("@@", m.group(1)) + m.group(0), s, count=1)
+              open(p, "w", encoding="utf-8").write(s)
+              done.append("layar penuh: GlBackend.cs ditambal")
+
+          res = os.environ.get("DEF_RES", "tidak diubah")
+          if res in ("1", "2"):
+              p = "RecompOne.Runtime/Config/ViewConfig.cs"
+              s = open(p, encoding="utf-8").read()
+              old = 'return GetBool("NativeResolution") ? 1 : 4;'
+              if s.count(old) != 1:
+                  sys.exit("GAGAL: baris default resolusi ditemukan %d kali (harus 1) di %s" % (s.count(old), p))
+              s = s.replace(old, 'return GetBool("NativeResolution") ? 1 : (System.OperatingSystem.IsAndroid() ? %s : 4);' % res)
+              open(p, "w", encoding="utf-8").write(s)
+              done.append("resolusi bawaan Android = %sx" % res)
+
+          print("Tambalan diterapkan:", done if done else "(tidak ada)")
+          PY
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Pasang workload Android
+        run: dotnet workload install android
+
+      - name: Pulihkan keystore (supaya tanda tangan APK tetap sama)
+        uses: actions/cache@v4
+        with:
+          path: signing
+          key: android-keystore-v1
+
+      - name: Periksa folder signing
+        run: |
+          mkdir -p logs signing
+          ls -la signing | tee logs/signing.txt
+          if [ -f signing/android-release.keystore ] && [ ! -f signing/keystore.properties ]; then
+            echo "keystore ada tanpa properties; dihapus supaya dibuat ulang" | tee -a logs/signing.txt
+            rm -f signing/android-release.keystore
+          fi
+
+      - name: Pasang komponen Android SDK yang dibutuhkan
+        continue-on-error: true
+        run: |
+          dotnet build AndroidRuntimeHost/AndroidRuntimeHost.csproj -t:InstallAndroidDependencies -f net10.0-android -p:AndroidSdkDirectory="$ANDROID_HOME" -p:JavaSdkDirectory="$JAVA_HOME" -p:AcceptAndroidSDKLicenses=True 2>&1 | tail -40
+
+      - name: Build APK
+        run: |
+          set -eo pipefail
+          python3 publish_release.py --platform android 2>&1 | tee logs/build.log
+
+      - name: Ringkasan
+        if: always()
+        run: |
+          {
+            echo "## Tambalan dan build"
+            echo
+            echo "### Hasil tambalan"
+            echo '```'
+            cat logs/patch.log 2>/dev/null | cut -c1-150
+            echo '```'
+            echo
+            echo "### Perubahan kode (diff)"
+            echo '```'
+            git diff -U1 | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | cut -c1-110 | head -40
+            echo '```'
+            echo
+            echo "### Build"
+            echo '```'
+            grep -E "\[publish\]|error|Error|FAILED" logs/build.log 2>/dev/null | cut -c1-200 | tail -30
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: CrashBandicoot-android-patched
+          path: |
+            publish-android/*.apk
+            logs/
+          if-no-files-found: ignore
